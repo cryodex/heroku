@@ -1,4 +1,5 @@
 require 'mongoid'
+require 'mongoid_search'
 require 'siv'
 require 'sse'
 require 'ope'
@@ -44,29 +45,41 @@ module Moped
             
             documents.each_with_index do |document, index|
               
+              table = document['_t']
+              next unless table
+              
               document.each do |key, str|
                 
-                next unless str.is_a?(String)
-
-                if str[0..4] == 'cryo|'
+                crypto_key = Cryodex.generate_key(table, key)
+                
+                ct = nil
+                
+                if str.is_a?(Numeric)
+                  
+                  if str > 1
+                    
+                    cipher = OPE::Cipher.new(crypto_key.byteslice(0, 16), 4, 8)
+                    ct = cipher.decrypt(str)
+                  
+                  else
+                    
+                    ct = str
+                    
+                  end
+                  
+                elsif str.is_a?(String)
 
                   parts = str.split('|')
 
-                  table, col = parts[1].split
-
-                  type = parts[3]
-
-                  crypto_key = Cryodex.generate_key(table, col)
-        
-                  ct = nil
+                  type = parts[0]
 
                   ct = if type == 'det'
                     
                     cipher = SIV::Cipher.new(crypto_key)
 
-                    ct = Base64.strict_decode64(parts[4])
+                    ct = Base64.strict_decode64(parts[1])
                     cipher.decrypt(ct, [])
-
+                    
                   elsif type == 'sse'
 
                     cipher = SSE::Cipher.new(crypto_key)
@@ -79,14 +92,18 @@ module Moped
 
                   else
                     
-                    raise 'unsupported cap'
+                    str
                     
                   end
                   
-                  arg.instance_eval do
-                    @documents[index][key] = ct
-                  end
+                else
                   
+                  ct = str
+                  
+                end
+                                
+                arg.instance_eval do
+                  @documents[index][key] = ct
                 end
                 
               end
@@ -96,8 +113,6 @@ module Moped
           end
           
         end
-        
-        ap args.inspect
         
         callback.call(*args, &block) if callback
         
@@ -113,10 +128,14 @@ module Moped
         documents = operation.instance_eval { @documents }
         
         if selector
-          selector = encrypt_recurse(selector, collection)
+        
+          selector = encrypt_recurse(selector, collection, false)
           operation.instance_eval { @selector = selector }
+          
         elsif documents
-          documents = documents.map { |d| encrypt_recurse(d, collection) }
+          documents = documents.map do |d|
+            encrypt_recurse(d.dup, collection, true)
+          end
           operation.instance_eval { @documents = documents }
         else
           raise 'Should not happen'
@@ -132,43 +151,89 @@ module Moped
       
     end
 
-    def encrypt_recurse(selector, collection)
+    def encrypt_recurse(selector, collection, flag2)
 
       return unless selector
 
+      flag = false
+      
       selector.each do |key, val|
 
         ct = if val.is_a?(Hash)
-          encrypt_recurse(val, collection)
+          encrypt_recurse(val, collection, flag2)
+        elsif val.is_a?(Array)
+          val.map do |value|
+            encrypt(key.to_s, value, collection)
+          end
         else
-          
           next if key == '_id'
+          flag = true
           encrypt(key.to_s, val, collection)
-          
         end
         
         selector[key] = ct
 
       end
       
+      selector['_t'] = collection if flag && flag2
+      
       selector
 
     end
-    
-
+  
     def encrypt(key, val, collection)
 
-      return val unless val.is_a?(String)
-
       crypto_key = Cryodex.generate_key(collection, key)
+      
+      if val.is_a?(String)
 
-      header = 'cryo|' + collection + '|' + key
-      cipher = SIV::Cipher.new(crypto_key)
-      header + '|det|' + 
-      Base64.strict_encode64(cipher.encrypt(val.dup, [])) + '|end'
+        cipher = SIV::Cipher.new(crypto_key)
+
+        'det|' + Base64.strict_encode64(cipher.encrypt(val, []))
+      
+     elsif val.is_a?(Numeric) && val > 1
+        
+        cipher = OPE::Cipher.new(crypto_key.byteslice(0, 16), 4, 8)
+        cipher.encrypt(val)
+      
+      else
+        
+        val
+        
+      end
 
     end
     
+  end
+  
+end
+
+Mongoid::Search::ClassMethods.module_eval do
+  
+  def query(keywords, options)
+    
+    crypto_key = Cryodex.generate_key(nil, nil)
+    
+    cipher = SSE::Cipher.new(crypto_key)
+    
+    keywords_hash = keywords.map do |kw|
+      { :_keywords => Base64.strict_encode64(cipher.generate_token(crypto_key, kw)[:ct]) }
+    end
+
+    criteria.send("#{(options[:match]).to_s}_of", *keywords_hash)
+    
+  end
+  
+  def set_keywords
+    
+    crypto_key = Cryodex.generate_key(nil, nil)
+    cipher = SSE::Cipher.new(crypto_key)
+    
+    self._keywords = cipher.encrypt_words(crypto_key,
+      Mongoid::Search::Util.keywords(self, self.search_fields).
+      flatten.reject{|k| k.nil? || k.empty?}.uniq.sort).map do |w|
+        Base64.strict_encode64(w)
+      end
   end
   
 end
