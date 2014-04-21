@@ -3,8 +3,8 @@
   "api": {
     "config_vars": [ "CRYODEX_URL" ],
     "regions": [ "us" ],
-    "password": "3c313cfb40f8dadf951710567dc8c04d",
-    "sso_salt": "a3c594d43bc17ac282e5c08af8d09b49",
+    "password": "e1da6f118a1ebcd4c12e6053bd04ff67",
+    "sso_salt": "41ca7a07d0296f7db790b4f6e4e6fcc1",
     "production": {
       "base_url": "https://yourapp.com/heroku/resources",
       "sso_url": "https://yourapp.com/sso/login"
