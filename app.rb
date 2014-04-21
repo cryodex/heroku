@@ -22,6 +22,7 @@ class App < Sinatra::Base
     field :username, type: String
     field :password, type: String
     field :databases, type: Array
+    field :uri, type: String
     
   end
   
@@ -64,8 +65,8 @@ class App < Sinatra::Base
       @json_body || (body = request.body.read && JSON.parse(body))
     end
 
-    def get_resource
-      Tenant.find(params[:id])
+    def get_resource(id)
+      Tenant.find(id)
     rescue
       halt 404, 'resource not found'
     end
@@ -106,8 +107,6 @@ class App < Sinatra::Base
     sso
   end
   
-  # mongodb://535561fb2193e2edec000001:79922195890938c26d831e69676c6a11@localhost:27017/535561fb2193e2edec000001
-
   # provision
   post '/heroku/resources' do
     
@@ -122,22 +121,23 @@ class App < Sinatra::Base
     username = OpenSSL::Random.random_bytes(8).unpack("H*").first
     password = OpenSSL::Random.random_bytes(18).unpack("H*").first
     database = OpenSSL::Random.random_bytes(10).unpack("H*").first
+    uri = "mongodb://#{username}:#{password}@#{Host}/#{database}"
     
-    tenant = Tenant.new(:heroku_id => json_body['heroku_id'],
+    tenant = Tenant.create(:heroku_id => json_body['heroku_id'],
                         :plan => json_body.fetch('plan', 'test'),
                         :region => json_body['region'],
                         :callback_url => json_body['callback_url'],
                         :options => json_body['options'],
                         :username => username,
                         :password => password,
-                        :databases => [database])
+                        :databases => [database],
+                        :uri => uri)
     
+    warn tenant.id.to_s.inspect
     client = Mongo::MongoClient.from_uri(AdminURI)
-    
+
     db = client[database]
     db.add_user(username, password, false, { roles: ['dbAdmin', 'readWrite'] })
-    
-    uri = "mongodb://#{username}:#{password}@#{Host}/#{database}"
     
     status 201
     
@@ -151,25 +151,34 @@ class App < Sinatra::Base
 
   # deprovision
   delete '/heroku/resources/:id' do |id|
+    
     show_request
     protected!
     
-    client = Mongo::MongoClient.from_uri(AdminURI)
-    client.drop_database(id)
+    tenant = get_resource(id)
     
-    get_resource.destroy
+    client = Mongo::MongoClient.from_uri(tenant.uri)
+    db_name = tenant.databases.first
+    
+    client.drop_database(db_name)
     
     "ok"
+    
   end
 
   # plan change
-  put '/heroku/resources/:id' do
+  put '/heroku/resources/:id' do |id|
+    
     show_request
     protected!
-    resource = get_resource
+    
+    resource = get_resource(id)
     resource.plan = json_body['plan']
+    
     resource.save!
+    
     {}.to_json
+    
   end
   
 end
