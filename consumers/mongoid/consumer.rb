@@ -1,7 +1,8 @@
 SpecPersonas = [
   { name: 'rich', balance: 5000, interests: ['golf', 'hockey'], bio: 'I like stuff' },
   { name: 'poor', balance: 2999, interests: ['books', 'music'], bio: 'This is a test test' },
-  { name: 'middle', balance: 3564, interests: ['tv', 'books'], bio: 'Hello to world!' }
+  { name: 'middle', balance: 3564, interests: ['tv', 'books'], bio: 'Hello to world!' },
+  { name: 'zen', interests: ['one', 'two', 'three', 'blah'], bio: 'Hello to the world!' }
 ]
 
 require 'openssl'
@@ -20,14 +21,14 @@ def benchmark
       
       RubyProf.start
       
-      500.times do
+      1000.times do
         
         user = User.create(SpecPersonas[0])
         user.save!
       end
       
       result = RubyProf.stop
-
+      
       # Print a flat profile to text
       printer = RubyProf::FlatPrinter.new(result)
       printer.print(STDOUT)
@@ -37,7 +38,7 @@ def benchmark
     puts "1000 inserts (2)"
     
     x.report do 
-      500.times do
+      1000.times do
         user = User.create(SpecPersonas[1])
         user.save!
       end
@@ -45,8 +46,16 @@ def benchmark
     
     puts "1000 inserts (3)"
     x.report do 
-      500.times do
+      1000.times do
         user = User.create(SpecPersonas[2])
+        user.save!
+      end
+    end
+    
+    puts "1000 inserts (4)"
+    x.report do 
+      1000.times do
+        user = User.create(SpecPersonas[3])
         user.save!
       end
     end
