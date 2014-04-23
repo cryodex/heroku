@@ -1,5 +1,4 @@
 require 'mongoid'
-require 'mongoid_search'
 require 'siv'
 require 'sse'
 require 'ope'
@@ -31,6 +30,8 @@ module Moped
   
   class Node
     
+    Base64Regexp = /^(?:[A-Za-z0-9+\/]{4}\n?)*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=)?$/
+    
     def process(operation, &callback)
       
       after_query = lambda do |*args, &block|
@@ -45,11 +46,11 @@ module Moped
             
             documents.each_with_index do |document, index|
               
-              table = document['_t']
+              table = document['_table']
               next unless table
               
               document.each do |key, str|
-                
+     
                 crypto_key = Cryodex.generate_key(table, key)
                 
                 ct = nil
@@ -67,34 +68,12 @@ module Moped
                     
                   end
                   
-                elsif str.is_a?(String)
+                elsif str.is_a?(String) && str.match(Base64Regexp)
+                  
+                  cipher = SIV::Cipher.new(crypto_key)
 
-                  parts = str.split('|')
-
-                  type = parts[0]
-
-                  ct = if type == 'det'
-                    
-                    cipher = SIV::Cipher.new(crypto_key)
-
-                    ct = Base64.strict_decode64(parts[1])
-                    cipher.decrypt(ct, [])
-                    
-                  elsif type == 'sse'
-
-                    cipher = SSE::Cipher.new(crypto_key)
-
-                    ct = parts[4].split('-').map do |p|
-                      Base64.strict_decode64(p)
-                    end
-
-                    cipher.decrypt_words(crypto_key, ct).join(' ')
-
-                  else
-                    
-                    str
-                    
-                  end
+                  ct = Base64.strict_decode64(str)
+                  ct = cipher.decrypt(ct, [])
                   
                 else
                   
@@ -175,7 +154,7 @@ module Moped
 
       end
       
-      selector['_t'] = collection if flag && flag2
+      selector['_table'] = collection if flag && flag2
       
       selector
 
@@ -189,7 +168,7 @@ module Moped
 
         cipher = SIV::Cipher.new(crypto_key)
 
-        'det|' + Base64.strict_encode64(cipher.encrypt(val, []))
+        Base64.strict_encode64(cipher.encrypt(val, []))
       
      elsif val.is_a?(Numeric) && val > 1
         
@@ -208,32 +187,22 @@ module Moped
   
 end
 
+require 'mongoid_search'
+
 Mongoid::Search::ClassMethods.module_eval do
   
   def query(keywords, options)
     
     crypto_key = Cryodex.generate_key(nil, nil)
     
-    cipher = SSE::Cipher.new(crypto_key)
+    cipher = SIV::Cipher.new(crypto_key)
     
     keywords_hash = keywords.map do |kw|
-      { :_keywords => Base64.strict_encode64(cipher.generate_token(crypto_key, kw)[:ct]) }
+      { :_keywords => Base64.strict_encode64(cipher.encrypt(kw, [])) }
     end
 
     criteria.send("#{(options[:match]).to_s}_of", *keywords_hash)
     
-  end
-  
-  def set_keywords
-    
-    crypto_key = Cryodex.generate_key(nil, nil)
-    cipher = SSE::Cipher.new(crypto_key)
-    
-    self._keywords = cipher.encrypt_words(crypto_key,
-      Mongoid::Search::Util.keywords(self, self.search_fields).
-      flatten.reject{|k| k.nil? || k.empty?}.uniq.sort).map do |w|
-        Base64.strict_encode64(w)
-      end
   end
   
 end
