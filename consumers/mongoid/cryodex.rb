@@ -105,7 +105,7 @@ module Moped
         
         selector = operation.instance_eval { @selector }
         documents = operation.instance_eval { @documents }
-        
+      
         if selector
         
           selector = encrypt_recurse(selector, collection, false)
@@ -116,8 +116,10 @@ module Moped
             encrypt_recurse(d.dup, collection, true)
           end
           operation.instance_eval { @documents = documents }
+        elsif operation.is_a?(Moped::Protocol::GetMore)
+          # do nothing
         else
-          raise 'Should not happen'
+          raise 'should not happen'
         end
         
       end
